@@ -140,6 +140,7 @@ Update `pubspec.yaml`
 flutter:
   assets:
     - assets/models/
+    - .env 
 ```
 
 Run:
