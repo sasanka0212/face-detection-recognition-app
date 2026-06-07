@@ -6,7 +6,6 @@ import 'package:face_recognition_app/services/face_aligner_service.dart';
 import 'package:face_recognition_app/services/face_database_service.dart';
 import 'package:face_recognition_app/services/face_embedder_serbice.dart';
 import 'package:face_recognition_app/services/face_painter.dart';
-import 'package:face_recognition_app/services/yunet_postprocess.dart';
 import 'package:face_recognition_app/services/yunet_preprocessor.dart';
 import 'package:face_recognition_app/services/yunet_service.dart';
 import 'package:flutter/material.dart';
@@ -37,7 +36,6 @@ class _CameraScreenState extends State<CameraScreen> {
   final _yuNet = YuNetService();
   final _embedder = FaceEmbedderService();
   final _faceAlignService = FaceAlignerService();
-  final _faceDb = FaceDatabaseService();
 
   @override
   void initState() {
@@ -48,7 +46,6 @@ class _CameraScreenState extends State<CameraScreen> {
   Future<void> _init() async {
     await _yuNet.initialize();
     await _embedder.initialize();
-    await _faceDb.initialize();
     await initializeCamera();
   }
 
@@ -89,13 +86,13 @@ class _CameraScreenState extends State<CameraScreen> {
 
       // Save one debug image
       if (!_savedFrame) {
-        print('Corrected Image: ${corrected.width} x ${corrected.height}');
+        //print('Corrected Image: ${corrected.width} x ${corrected.height}');
 
         final jpgBytes = img.encodeJpg(corrected, quality: 95);
 
         final directory = await getExternalStorageDirectory();
 
-        print('DIR = ${directory?.path}');
+        //print('DIR = ${directory?.path}');
 
         if (directory != null) {
           final file = File('${directory.path}/test_frame.jpg');
@@ -116,72 +113,21 @@ class _CameraScreenState extends State<CameraScreen> {
 
       final detections = await _yuNet.detect(inputTensor);
 
-      /* if (detections.isNotEmpty) {
-        final alignedFace = _debugAlignFace(
-          image: corrected,
-          detection: detections.first,
-        );
-
-        _alignedFaceBytes =
-            Uint8List.fromList(
-              img.encodeJpg(alignedFace),
-            );
-      } */
-
       if (mounted & detections.isNotEmpty) {
         setState(() {
           _detections = detections;
         });
       }
 
-      print('Tensor Length: ${inputTensor.length}');
+      //print('Tensor Length: ${inputTensor.length}');
     } catch (e, st) {
-      print('ERROR: $e');
+      //print('ERROR: $e');
       print(st);
     } finally {
       _isProcessing = false;
     }
   }
-
-  img.Image _debugAlignFace({
-    required img.Image image,
-    required DetectionCandidate detection,
-  }) {
-    final xs = detection.landmarks.points.map((e) => e.x);
-
-    final ys = detection.landmarks.points.map((e) => e.y);
-
-    final minX = xs.reduce(min);
-    final maxX = xs.reduce(max);
-
-    final minY = ys.reduce(min);
-    final maxY = ys.reduce(max);
-
-    final width = maxX - minX;
-    final height = maxY - minY;
-
-    final paddingX = width * 1.2;
-    final paddingY = height * 1.8;
-
-    final cropX = max(0, (minX - paddingX).toInt());
-
-    final cropY = max(0, (minY - paddingY).toInt());
-
-    final cropW = min(image.width - cropX, (width + paddingX * 2).toInt());
-
-    final cropH = min(image.height - cropY, (height + paddingY * 2).toInt());
-
-    final cropped = img.copyCrop(
-      image,
-      x: cropX,
-      y: cropY,
-      width: cropW,
-      height: cropH,
-    );
-
-    return img.copyResize(cropped, width: 112, height: 112);
-  }
-
+  
   Future<void> _registerFace() async {
     if (_nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(
@@ -235,29 +181,23 @@ class _CameraScreenState extends State<CameraScreen> {
 
       final embedding = await _embedder.infer(alignedFace);
 
-      await _faceDb.saveFace(
+      await FaceDatabaseService.instance.saveFace(
         _nameController.text.trim(),
         embedding,
       );
 
-      ScaffoldMessenger.of(context)
-        .showSnackBar(
-          SnackBar(
-            content: Text(
-              "${_nameController.text} registered",
-          ),
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("${_nameController.text} registered")),
       );
 
-      final faces =
-        await _faceDb.getAllFaces();
+      final faces = await FaceDatabaseService.instance.getAllFaces();
 
       print(
         "REGISTERED FACES = "
         "${faces.length}",
       );
 
-      for(final face in faces){
+      for (final face in faces) {
         print(face.name);
       }
 
@@ -499,7 +439,10 @@ class _CameraScreenState extends State<CameraScreen> {
           ),
         ],
       ),
-      floatingActionButton: IconButton(onPressed: () => _faceDb.exportDb(), icon: Icon(Icons.download)),
+      floatingActionButton: IconButton(
+        onPressed: () => FaceDatabaseService.instance.exportDb(),
+        icon: Icon(Icons.download),
+      ),
     );
   }
 

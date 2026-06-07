@@ -4,10 +4,14 @@ import '../models/detection_candidate.dart';
 class FacePainter extends CustomPainter {
   final List<DetectionCandidate> detections;
   final Size imageSize;
+  final String? recognizedName;
+  final double? similarity;
 
   FacePainter({
     required this.detections,
     required this.imageSize,
+    this.recognizedName,
+    this.similarity
   });
 
   @override
