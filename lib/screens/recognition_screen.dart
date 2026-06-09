@@ -1,11 +1,15 @@
 import 'package:camera/camera.dart';
+import 'package:face_recognition_app/models/recognition_result.dart';
+import 'package:face_recognition_app/models/recognized_face.dart';
 import 'package:face_recognition_app/services/face_aligner_service.dart';
 import 'package:face_recognition_app/services/face_embedder_serbice.dart';
-import 'package:face_recognition_app/services/face_painter.dart';
+import 'package:face_recognition_app/services/face_recognition_painter.dart';
 import 'package:face_recognition_app/services/yunet_preprocessor.dart';
 import 'package:face_recognition_app/services/yunet_service.dart';
+import 'package:face_recognition_app/state/recognition_controller.dart';
 import 'package:face_recognition_app/utils/yuv_converter.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/detection_candidate.dart';
@@ -33,11 +37,15 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
   List<DetectionCandidate> _detections = [];
 
-  String _recognizedName = "Unknown";
+  final List<RecognizedFace> _trackedFaces = []; 
 
-  double _score = 0;
+  // all reconized faces
+  List<RecognizedFace> _recognizedFaces = [];
 
-  bool _processing = false;
+  // cache the face results
+  final Map<String, RecognitionResult> _faceCache = {};
+
+  //bool _processing = false;
 
   int _frameCount = 0;
 
@@ -45,12 +53,12 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
   img.Image? _latestFrame;
 
+  final RecognitionController _recognitionController = Get.put(RecognitionController());
+
   @override
   void initState() {
     super.initState();
-
     _recognizer = FaceRecognitionService(FaceDatabaseService.instance);
-
     _initialize();
   }
 
@@ -82,6 +90,14 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
     }
   }
 
+  String _getFaceKey(DetectionCandidate detection) {
+    final centerX = ((detection.box.x1 + detection.box.x2) / 2).round();
+
+    final centerY = ((detection.box.y1 + detection.box.y2) / 2).round();
+
+    return "${centerX}_$centerY";
+  }
+
   Future<void> _processCameraImage(
     CameraImage image,
   ) async {
@@ -90,7 +106,7 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
     _frameCount++;
 
-    // Run recognition every 10th frame
+    // Run recognition every 15th frame
     if (_frameCount % 15 != 0) {
       return;
     }
@@ -125,34 +141,58 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
       );
 
       if (detections.isEmpty) {
+        _faceCache.clear();
 
         if (mounted) {
           setState(() {
             _detections = [];
-            _recognizedName = "Unknown";
-            _score = 0;
+            _recognizedFaces = [];
           });
         }
 
         return;
       }
 
-      final alignedFace =
-          _aligner.align(
-        corrected,
-        detections.first.landmarks,
-      );
+      final recognizedFaces = <RecognizedFace>[];
 
-      final embedding =
-          await _embedder.infer(
-        alignedFace,
-      );
+      for(final detection in detections) {
 
-      final result =
-          await _recognizer.recognize(
-        embedding,
-      );
+        final key = _getFaceKey(detection);
 
+        try {
+          RecognitionResult result;
+
+          // cache hit for same face
+          if(_faceCache.containsKey(key)) {
+            result = _faceCache[key]!;
+          } else {
+            RecognizedFace? tracked = findTrackedFace(detection: detection);
+
+            //final alignedFace = _aligner.align(corrected, detection.landmarks);
+            if(tracked != null) {
+              recognizedFaces.add(RecognizedFace(detection: detection, name: tracked.name, score: tracked.score));
+              continue;
+            }
+            final alignedFace = _aligner.align(corrected, detection.landmarks);
+
+            final embedding = await _embedder.infer(alignedFace);
+
+            result = await _recognizer.recognize(embedding);
+            
+            if(result.name != null) {
+              _trackedFaces.add(RecognizedFace(detection: detection, name: result.name, score: result.score));
+
+            }
+          }
+
+          recognizedFaces.add(RecognizedFace(detection: detection, name: result.name ?? "Unknown", score: result.score));
+        } catch(e) {
+          recognizedFaces.add(
+            RecognizedFace(detection: detection, name: 'Unknown', score: 0),
+          );
+        }
+
+      }
       if (!mounted) return;
 
       setState(() {
@@ -160,17 +200,15 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
         _detections =
             detections;
 
-        _recognizedName =
-            result.name ??
-            "Unknown";
-
-        _score =
-            result.score;
+        //_recognizedName = result.name ?? "Unknown";
+        _recognizedFaces = recognizedFaces; 
+        //_score = result.score;
       });
 
     } catch (e, st) {
 
       //print("RECOGNITION ERROR");
+      
       print(e);
       print(st);
 
@@ -179,6 +217,16 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
       _isProcessing = false;
 
     }
+  }
+
+  RecognizedFace? findTrackedFace({required DetectionCandidate detection}) {
+    for(final face in _trackedFaces) {
+      final distance = _recognizer.distanceSquared(detection, face.detection);
+      if(distance < 2500) {
+        return face;
+      }
+    }
+    return null;
   }
 
   @override
@@ -200,72 +248,11 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
       appBar: AppBar(title: const Text('Face Recognition')),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: CameraPreview(
-              _cameraController!,
-            ),
-          ),
+          Positioned.fill(child: CameraPreview(_cameraController!)),
 
           Positioned.fill(
             child: CustomPaint(
-              painter: FacePainter(
-                detections: _detections,
-                imageSize: const Size(480, 720),
-              ),
-            ),
-          ),
-
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 40,
-            child: Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(.6),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: Colors.white12,
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-
-                  Text(
-                    _recognizedName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  Text(
-                    "Similarity: ${_score.toStringAsFixed(3)}",
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Text(
-                    _recognizedName == "Unknown"
-                        ? "No registered match"
-                        : "Face recognized successfully",
-                    style: TextStyle(
-                      color: _recognizedName == "Unknown"
-                          ? Colors.orange
-                          : Colors.green,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+              painter: FaceRecognitionPainter(recognizedFaces: _recognizedFaces, imageSize: const Size(480, 720)),
             ),
           ),
         ],

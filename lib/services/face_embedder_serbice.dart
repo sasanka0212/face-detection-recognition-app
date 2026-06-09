@@ -36,8 +36,8 @@ class FaceEmbedderService {
     );
     print("INPUT CREATED");
 
-    print("INPUT NAMES = ${_session.inputNames}");
-    print("OUTPUT NAMES = ${_session.outputNames}");
+    //print("INPUT NAMES = ${_session.inputNames}");
+    //print("OUTPUT NAMES = ${_session.outputNames}");
 
     print("BEFORE RUN");
 

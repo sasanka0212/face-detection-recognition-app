@@ -11,15 +11,15 @@ class FaceAlignerService {
     [70.7299, 92.2041],
   ];
 
-    img.Image align(
+  img.Image align(
     img.Image image,
     FaceLandmarks landmarks,
   ) {
 
     final matrix =
-        _estimateAffine(
-          landmarks,
-        );
+      _estimateAffine(
+        landmarks,
+      );
 
     return _warpAffine(
       image,
@@ -29,7 +29,7 @@ class FaceAlignerService {
     );
   }
 
-    List<List<double>> _estimateAffine(
+  List<List<double>> _estimateAffine(
     FaceLandmarks landmarks,
   ) {
 

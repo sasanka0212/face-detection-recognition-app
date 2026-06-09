@@ -1,3 +1,4 @@
+import 'package:face_recognition_app/models/detection_candidate.dart';
 import 'package:face_recognition_app/models/recognition_result.dart';
 import 'face_database_service.dart';
 
@@ -44,7 +45,7 @@ class FaceRecognitionService {
       );
     }
 
-    if (bestScore >= 0.75) {
+    if (bestScore >= 0.72) {
       return RecognitionResult(
         name: bestName,
         score: bestScore,
@@ -55,5 +56,18 @@ class FaceRecognitionService {
       name: null,
       score: bestScore,
     );
+  }
+
+  double  distanceSquared(DetectionCandidate a, DetectionCandidate b) {
+    final ax = (a.box.x1 + a.box.x2) / 2;
+    final ay = (a.box.y1 + a.box.y2) / 2;
+
+    final bx = (b.box.x1 + b.box.x2) / 2;
+    final by = (b.box.y1 + b.box.y2) / 2;
+
+    final dx = ax - bx;
+    final dy = ay - by;
+
+    return dx * dx + dy * dy;
   }
 }

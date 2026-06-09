@@ -12,8 +12,6 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import '../utils/yuv_converter.dart';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'dart:math';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -25,7 +23,7 @@ class CameraScreen extends StatefulWidget {
 class _CameraScreenState extends State<CameraScreen> {
   CameraController? controller;
   bool _isProcessing = false;
-  bool _savedFrame = false;
+  //bool _savedFrame = false;
   List<DetectionCandidate> _detections = [];
   Uint8List? _alignedFaceBytes;
   final TextEditingController _nameController = TextEditingController();
@@ -36,6 +34,9 @@ class _CameraScreenState extends State<CameraScreen> {
   final _yuNet = YuNetService();
   final _embedder = FaceEmbedderService();
   final _faceAlignService = FaceAlignerService();
+
+  List<CameraDescription> _cameras = [];
+  int _cameraIndex = 1;
 
   @override
   void initState() {
@@ -50,25 +51,45 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> initializeCamera() async {
-    final cameras = await availableCameras();
+    _cameras = await availableCameras();
 
-    final frontCamera = cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.front,
-      orElse: () => cameras.first,
-    );
+    await _startCamera(_cameraIndex);
+  }
 
-    controller = CameraController(
-      frontCamera,
-      ResolutionPreset.medium,
-      enableAudio: false,
-    );
+  Future<void> _startCamera(int index) async {
+    _isProcessing = false;
+
+    final oldController = controller;
+
+    controller = null;
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    if (oldController != null) {
+      if (oldController.value.isStreamingImages) {
+        await oldController.stopImageStream();
+      }
+
+      await oldController.dispose();
+    }
+
+    controller = CameraController(_cameras[index], ResolutionPreset.medium, enableAudio: false);
 
     await controller!.initialize();
+
     await controller!.startImageStream(_processCameraImage);
 
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _switchCameras() async {
+    if (_cameras.length < 2) return;
+    _cameraIndex = (_cameraIndex + 1) % _cameras.length;
+    await _startCamera(_cameraIndex);
   }
 
   void _processCameraImage(CameraImage image) async {
@@ -85,7 +106,7 @@ class _CameraScreenState extends State<CameraScreen> {
       _latestFrame = corrected;
 
       // Save one debug image
-      if (!_savedFrame) {
+      /* if (!_savedFrame) {
         //print('Corrected Image: ${corrected.width} x ${corrected.height}');
 
         final jpgBytes = img.encodeJpg(corrected, quality: 95);
@@ -99,21 +120,25 @@ class _CameraScreenState extends State<CameraScreen> {
 
           await file.writeAsBytes(jpgBytes);
 
-          print('====================');
-          print('IMAGE SAVED');
-          print(file.path);
-          print('FILE EXISTS = ${await file.exists()}');
-          print('====================');
+          //print('====================');
+          //print('IMAGE SAVED');
+          //print(file.path);
+          //print('FILE EXISTS = ${await file.exists()}');
+          //print('====================');
 
           _savedFrame = true;
         }
-      }
+      } */
 
       final inputTensor = YuNetPreprocessor.preprocess(corrected);
 
       final detections = await _yuNet.detect(inputTensor);
 
-      if (mounted & detections.isNotEmpty) {
+      if(!mounted) return;
+
+      final changed = detections.length != _detections.length;
+
+      if(changed) {
         setState(() {
           _detections = detections;
         });
@@ -177,7 +202,7 @@ class _CameraScreenState extends State<CameraScreen> {
     });
 
     try {
-      print("STEP 1");
+      //print("STEP 1");
 
       final embedding = await _embedder.infer(alignedFace);
 
@@ -190,28 +215,20 @@ class _CameraScreenState extends State<CameraScreen> {
         SnackBar(content: Text("${_nameController.text} registered")),
       );
 
-      final faces = await FaceDatabaseService.instance.getAllFaces();
-
-      print(
-        "REGISTERED FACES = "
-        "${faces.length}",
-      );
-
-      for (final face in faces) {
-        print(face.name);
-      }
-
-      // final sim = _embedder.cosineSimilarity(emb1, emb2);
+      //final faces = await FaceDatabaseService.instance.getAllFaces();
 
       /* print(
-        "Embedding Length = ${embedding.length}",
-      );
-      print(
-        'embedding list: ${embedding.take(20).toList()}',
+        "REGISTERED FACES = "
+        "${faces.length}",
       ); */
+
+      /* for (final face in faces) {
+        print(face.name);
+      } */
+
     } catch (e, st) {
-      print("EMBEDDER ERROR");
-      print(e);
+      //print("EMBEDDER ERROR");
+      //print(e);
       print('str: $st');
     }
   }
@@ -236,7 +253,10 @@ class _CameraScreenState extends State<CameraScreen> {
       body: Stack(
         children: [
           /// Camera Preview
-          Positioned.fill(child: CameraPreview(controller!)),
+          if (controller != null && controller!.value.isInitialized)
+            Positioned.fill(
+              child: CameraPreview(controller!),
+            ),
 
           /// aligned face
           if (_alignedFaceBytes != null)
@@ -434,6 +454,27 @@ class _CameraScreenState extends State<CameraScreen> {
                     ],
                   ),
                 ],
+              ),
+            ),
+          ),
+          Positioned(
+            top: 110,
+            right: 20,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _switchCameras,
+                borderRadius: BorderRadius.circular(30),
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(.65),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: const Icon(Icons.flip_camera_android, color: Colors.white, size: 28),
+                ),
               ),
             ),
           ),
