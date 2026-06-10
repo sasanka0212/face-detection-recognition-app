@@ -6,10 +6,8 @@ import 'package:face_recognition_app/services/face_embedder_serbice.dart';
 import 'package:face_recognition_app/services/face_recognition_painter.dart';
 import 'package:face_recognition_app/services/yunet_preprocessor.dart';
 import 'package:face_recognition_app/services/yunet_service.dart';
-import 'package:face_recognition_app/state/recognition_controller.dart';
 import 'package:face_recognition_app/utils/yuv_converter.dart';
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
 
 import '../models/detection_candidate.dart';
@@ -37,7 +35,12 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
   List<DetectionCandidate> _detections = [];
 
-  final List<RecognizedFace> _trackedFaces = []; 
+  final List<RecognizedFace> _trackedFaces = [];
+  List<CameraDescription> _cameras = []; 
+  int _cameraIndex = 0;
+  bool _isInitialized = false;
+  bool _isProcessing = false;
+  bool _isSwitchingCamera = false;
 
   // all reconized faces
   List<RecognizedFace> _recognizedFaces = [];
@@ -49,11 +52,7 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
   int _frameCount = 0;
 
-  bool _isProcessing = false;
-
   img.Image? _latestFrame;
-
-  final RecognitionController _recognitionController = Get.put(RecognitionController());
 
   @override
   void initState() {
@@ -69,24 +68,48 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
     await _embedder.initialize();
 
-    final cameras = await availableCameras();
+    _cameras = await availableCameras();
+    _cameraIndex = _cameras.indexWhere((camera) => camera.lensDirection == CameraLensDirection.front);
+    if(_cameraIndex == -1) {
+      setState(() => _cameraIndex = 0);
+    }
 
-    final front = cameras.firstWhere(
-      (e) => e.lensDirection == CameraLensDirection.front,
-    );
+    await startCamera(_cameraIndex);
+  }
 
-    _cameraController = CameraController(
-      front,
-      ResolutionPreset.medium,
-      enableAudio: false,
-    );
+  Future<void> startCamera(int index) async {
+    _isProcessing = false;  
 
-    await _cameraController!.initialize();
+    final oldController = _cameraController;
+    _cameraController = null;
 
-    await _cameraController!.startImageStream(_processCameraImage);
+    if (oldController != null) {
+      try {
+        if (oldController.value.isStreamingImages) {
+          await oldController.stopImageStream();
+        }
+      } catch (_) {}
+
+      await oldController.dispose();
+    }
+
+    final controller = CameraController(_cameras[index], ResolutionPreset.medium, enableAudio: false);
+
+    _cameraController = controller;
+
+    await controller.initialize();
+
+    if (!mounted) {
+      await controller.dispose();
+      return;
+    }
+
+    await controller.startImageStream(_processCameraImage);
 
     if (mounted) {
-      setState(() {});
+      setState(() {
+        _isInitialized = true;
+      });
     }
   }
 
@@ -103,6 +126,7 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
   ) async {
 
     if (_isProcessing) return;
+    if (_isSwitchingCamera) return;
 
     _frameCount++;
 
@@ -120,13 +144,18 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
         image,
       );
 
-      final corrected =
-          img.flipHorizontal(
-        img.copyRotate(
+      final front = _cameras[_cameraIndex].lensDirection == CameraLensDirection.front;
+      final corrected = front 
+        ?  img.flipHorizontal(
+            img.copyRotate(
+              rgb,
+              angle: -90,
+            ),
+          )
+        : img.copyRotate(
           rgb,
-          angle: -90,
-        ),
-      );
+          angle: 90,
+        );
 
       _latestFrame = corrected;
 
@@ -178,6 +207,7 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
             final embedding = await _embedder.infer(alignedFace);
 
             result = await _recognizer.recognize(embedding);
+            _faceCache[key] = result;
             
             if(result.name != null) {
               _trackedFaces.add(RecognizedFace(detection: detection, name: result.name, score: result.score));
@@ -229,6 +259,32 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
     return null;
   }
 
+  Future<void> switchCamera() async {
+    if (_cameras.length < 2) return;
+
+    setState(() {
+      _isSwitchingCamera = true;
+    });
+
+    _trackedFaces.clear();
+    _faceCache.clear();
+    _frameCount = 0;
+
+    setState(() {
+      _recognizedFaces = [];
+      _detections = [];
+      _cameraIndex = (_cameraIndex + 1) % _cameras.length;
+    });
+
+    await startCamera(_cameraIndex);
+
+    if (mounted) {
+      setState(() {
+        _isSwitchingCamera = false;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _cameraController?.stopImageStream();
@@ -241,10 +297,14 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator())
+      );
     }
 
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(title: const Text('Face Recognition')),
       body: Stack(
         children: [
@@ -253,6 +313,28 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
           Positioned.fill(
             child: CustomPaint(
               painter: FaceRecognitionPainter(recognizedFaces: _recognizedFaces, imageSize: const Size(480, 720)),
+            ),
+          ),
+
+          Positioned(
+            top: 110,
+            right: 20,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: switchCamera,
+                borderRadius: BorderRadius.circular(30),
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(.65),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: const Icon(Icons.flip_camera_android, color: Colors.white, size: 28),
+                ),
+              ),
             ),
           ),
         ],

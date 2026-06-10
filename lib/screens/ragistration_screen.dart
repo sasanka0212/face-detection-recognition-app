@@ -1,29 +1,245 @@
-import 'dart:typed_data';
-
 import 'package:camera/camera.dart';
-import 'package:face_recognition_app/models/detection_candidate.dart';
-import 'package:face_recognition_app/services/face_aligner_service.dart';
-import 'package:face_recognition_app/services/face_database_service.dart';
-import 'package:face_recognition_app/services/face_embedder_serbice.dart';
 import 'package:face_recognition_app/services/face_painter.dart';
-import 'package:face_recognition_app/services/yunet_preprocessor.dart';
-import 'package:face_recognition_app/services/yunet_service.dart';
+import 'package:face_recognition_app/state/registration_controller.dart';
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as img;
-import '../utils/yuv_converter.dart';
-import 'dart:io';
+import 'package:get/get.dart';
 
-class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key});
+class RegistrationScreen extends StatefulWidget {
+  const RegistrationScreen({super.key});
 
   @override
-  State<CameraScreen> createState() => _CameraScreenState();
+  State<RegistrationScreen> createState() => _RegistrationScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _RegistrationScreenState extends State<RegistrationScreen> {
+  final registrationController = Get.put(RegistrationController());
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      if(!registrationController.isInitialized.value || registrationController.cameraController.value == null) {
+        return const Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: CircularProgressIndicator(),
+          )
+        );
+      }
+
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+           Positioned.fill(
+              child: OverflowBox(
+                maxWidth: double.infinity,
+                maxHeight: double.infinity,
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: registrationController.cameraController.value!.value.previewSize!.height,
+                    height: registrationController.cameraController.value!.value.previewSize!.width,
+                    child: CameraPreview(registrationController.cameraController.value!),
+                  ),
+                ),
+              ),
+            ),
+            Obx(() {
+              final bytes = registrationController.alignedFaceBytes.value;
+              if(bytes == null) {
+                return const SizedBox();
+              }
+               return Positioned(
+                top: 120,
+                right: 20,
+                child: Container(
+                  width: 112,
+                  height: 112,
+                  decoration: BoxDecoration(border: Border.all(color: Colors.green, width: 2)),
+                  child: Image.memory(bytes, fit: BoxFit.cover),
+                ),
+              );
+            }),
+
+            Positioned.fill(
+              child: CustomPaint(
+                painter: FacePainter(detections: registrationController.detections, imageSize: const Size(480, 720)),
+              ),
+            ),
+
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(color: Colors.black.withOpacity(.45), borderRadius: BorderRadius.circular(30)),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.face, color: Colors.green, size: 18),
+                          SizedBox(width: 8),
+                          Text(
+                            "Face Detection",
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const Spacer(),
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(color: Colors.black.withOpacity(.45), borderRadius: BorderRadius.circular(30)),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.camera_alt, color: Colors.white, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            "${registrationController.detections.length}",
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            /// Center Detection Target
+            Center(
+              child: Container(
+                width: 260,
+                height: 320,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white.withOpacity(.7), width: 2),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+            ),
+
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 180,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.black.withOpacity(.7), borderRadius: BorderRadius.circular(20)),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: registrationController.nameController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: "Enter Name",
+                        hintStyle: TextStyle(color: Colors.white.withOpacity(.6)),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(onPressed: () => registrationController.registerFace(context: context), child: const Text("Register Face")),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            /// Bottom Status Card
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 40,
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(.6),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(registrationController.detections.isNotEmpty ? Icons.check_circle : Icons.search, color: registrationController.detections.isNotEmpty ? Colors.green : Colors.orange),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            registrationController.detections.isNotEmpty ? "Face Detected" : "Searching for face...",
+                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [_buildInfoTile("Faces", registrationController.detections.length.toString()), _buildInfoTile("Camera", "Front"), _buildInfoTile("Model", "YuNet")],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 110,
+              right: 20,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: registrationController.switchCamera,
+                  borderRadius: BorderRadius.circular(30),
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(.65),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: const Icon(Icons.flip_camera_android, color: Colors.white, size: 28),
+                  ),
+                ),
+              ),
+            ),
+          ]
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    Get.delete<RegistrationController>();
+    super.dispose();
+  }
+
+  Widget _buildInfoTile(String title, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        const SizedBox(height: 4),
+        Text(title, style: TextStyle(color: Colors.white.withOpacity(.7), fontSize: 12)),
+      ],
+    );
+  }
+}
+
+/* class _CameraScreenState extends State<CameraScreen> {
   CameraController? controller;
   bool _isProcessing = false;
-  //bool _savedFrame = false;
   List<DetectionCandidate> _detections = [];
   Uint8List? _alignedFaceBytes;
   final TextEditingController _nameController = TextEditingController();
@@ -86,7 +302,7 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
-  void _switchCameras() async {
+  void _switchCamera() async {
     if (_cameras.length < 2) return;
     _cameraIndex = (_cameraIndex + 1) % _cameras.length;
     await _startCamera(_cameraIndex);
@@ -143,8 +359,6 @@ class _CameraScreenState extends State<CameraScreen> {
           _detections = detections;
         });
       }
-
-      //print('Tensor Length: ${inputTensor.length}');
     } catch (e, st) {
       //print('ERROR: $e');
       print(st);
@@ -463,7 +677,7 @@ class _CameraScreenState extends State<CameraScreen> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: _switchCameras,
+                onTap: _switchCamera,
                 borderRadius: BorderRadius.circular(30),
                 child: Container(
                   width: 56,
@@ -507,3 +721,4 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 }
+ */

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'camera_screen.dart';
+import 'ragistration_screen.dart';
 import 'recognition_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -50,7 +50,7 @@ class HomeScreen extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const CameraScreen(),
+                      builder: (_) => RegistrationScreen(),
                     ),
                   );
                 },
