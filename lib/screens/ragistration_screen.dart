@@ -17,7 +17,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      if(!registrationController.isInitialized.value || registrationController.cameraController.value == null) {
+      final cameraController = registrationController.cameraController.value;
+      if(cameraController == null || !cameraController.value.isInitialized || cameraController.value.previewSize == null) {
         return const Scaffold(
           backgroundColor: Colors.black,
           body: Center(
@@ -37,9 +38,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 child: FittedBox(
                   fit: BoxFit.cover,
                   child: SizedBox(
-                    width: registrationController.cameraController.value!.value.previewSize!.height,
-                    height: registrationController.cameraController.value!.value.previewSize!.width,
-                    child: CameraPreview(registrationController.cameraController.value!),
+                    width: cameraController.value.previewSize!.height,
+                    height: cameraController.value.previewSize!.width,
+                    child: CameraPreview(cameraController),
                   ),
                 ),
               ),
@@ -196,7 +197,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: registrationController.switchCamera,
+                  onTap: registrationController.isSwitchCamera.value 
+                    ? null
+                    : registrationController.switchCamera,
                   borderRadius: BorderRadius.circular(30),
                   child: Container(
                     width: 56,

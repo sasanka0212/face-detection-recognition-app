@@ -1,6 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:face_recognition_app/models/recognition_result.dart';
 import 'package:face_recognition_app/models/recognized_face.dart';
+import 'package:face_recognition_app/services/anti_spoof_service.dart';
 import 'package:face_recognition_app/services/face_aligner_service.dart';
 import 'package:face_recognition_app/services/face_embedder_serbice.dart';
 import 'package:face_recognition_app/services/face_recognition_painter.dart';
@@ -31,6 +32,8 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
   final FaceAlignerService _aligner = FaceAlignerService();
 
+  final AntiSpoofService _spoofService = AntiSpoofService();
+
   late final FaceRecognitionService _recognizer;
 
   List<DetectionCandidate> _detections = [];
@@ -47,6 +50,9 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
   // cache the face results
   final Map<String, RecognitionResult> _faceCache = {};
+
+  // spoof cache
+  final Map<String, bool> _spoofCache = {};
 
   //bool _processing = false;
 
@@ -67,6 +73,8 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
     await _yuNet.initialize();
 
     await _embedder.initialize();
+
+    await _spoofService.initialize();
 
     _cameras = await availableCameras();
     _cameraIndex = _cameras.indexWhere((camera) => camera.lensDirection == CameraLensDirection.front);
@@ -189,36 +197,79 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
         final key = _getFaceKey(detection);
 
         try {
-          RecognitionResult result;
+          //RecognitionResult result;
+  
+          final tracked = findTrackedFace(detection: detection);
 
-          // cache hit for same face
+          //final alignedFace = _aligner.align(corrected, detection.landmarks);
+          if(tracked != null && tracked.name != "Unknown" && tracked.name != 'Fake') {
+            recognizedFaces.add(RecognizedFace(detection: detection, name: tracked.name, score: tracked.score, isReal: tracked.isReal, spoofScore: tracked.spoofScore));
+            continue;
+          }
+          final alignedFace = _aligner.align(corrected, detection.landmarks);
+
+          bool isReal;
+          double spoofScore;
+
+          final spoofResult = await _spoofService.detect(alignedFace);
+          isReal = (spoofResult.label == 'Real Face') && (spoofResult.confidence >= 0.75);
+
+          spoofScore = spoofResult.confidence;
+
+          //_spoofCache[key] = isReal;
+
+          if (!isReal) {
+            final spoofFace = RecognizedFace(detection: detection, name: 'Fake', score: 0, isReal: false, spoofScore: spoofScore);
+
+            //_trackedFaces.add(spoofFace);
+            //recognizedFaces.add(spoofFace);
+
+            continue;
+          }
+
+          /* if(_spoofCache.containsKey(key)) {
+            isReal = _spoofCache[key]!;
+            spoofScore = 1.0;
+          } else { 
+            final spoofResult = await _spoofService.detect(alignedFace);
+            isReal = (spoofResult.label == 'Real Face') && (spoofResult.confidence >= 0.75);
+
+            spoofScore = spoofResult.confidence;
+
+            _spoofCache[key] = isReal;
+
+            if (!isReal) {
+              final spoofFace = RecognizedFace(detection: detection, name: 'Fake', score: 0, isReal: false, spoofScore: spoofScore);
+
+              _trackedFaces.add(spoofFace);
+              recognizedFaces.add(spoofFace);
+
+              continue;
+            } 
+          } */
+
+          RecognitionResult result;
           if(_faceCache.containsKey(key)) {
             result = _faceCache[key]!;
           } else {
-            RecognizedFace? tracked = findTrackedFace(detection: detection);
-
-            //final alignedFace = _aligner.align(corrected, detection.landmarks);
-            if(tracked != null) {
-              recognizedFaces.add(RecognizedFace(detection: detection, name: tracked.name, score: tracked.score));
-              continue;
-            }
-            final alignedFace = _aligner.align(corrected, detection.landmarks);
-
             final embedding = await _embedder.infer(alignedFace);
 
             result = await _recognizer.recognize(embedding);
             _faceCache[key] = result;
-            
-            if(result.name != null) {
-              _trackedFaces.add(RecognizedFace(detection: detection, name: result.name, score: result.score));
-
-            }
           }
+          final recognizedFace = RecognizedFace(
+            detection: detection, 
+            name: result.name ?? 'Unknown', 
+            score: result.score, 
+            isReal: isReal, 
+            spoofScore: spoofScore,
+          );
 
-          recognizedFaces.add(RecognizedFace(detection: detection, name: result.name ?? "Unknown", score: result.score));
+          updateTrackedFace(recognizedFace);
+          recognizedFaces.add(recognizedFace);
         } catch(e) {
           recognizedFaces.add(
-            RecognizedFace(detection: detection, name: 'Unknown', score: 0),
+            RecognizedFace(detection: detection, name: 'Unknown', score: 0, isReal: false, spoofScore: 0),
           );
         }
 
@@ -249,6 +300,12 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
     }
   }
 
+  void updateTrackedFace(RecognizedFace face) {
+    _trackedFaces.removeWhere((f) => _recognizer.distanceSquared(face.detection, f.detection) < 2500);
+
+    _trackedFaces.add(face);
+  }
+
   RecognizedFace? findTrackedFace({required DetectionCandidate detection}) {
     for(final face in _trackedFaces) {
       final distance = _recognizer.distanceSquared(detection, face.detection);
@@ -268,6 +325,8 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
     _trackedFaces.clear();
     _faceCache.clear();
+    _spoofCache.clear();
+    
     _frameCount = 0;
 
     setState(() {
@@ -291,6 +350,10 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
 
     _cameraController?.dispose();
 
+    _yuNet.dispose();
+
+    _spoofService.dispose();
+
     super.dispose();
   }
 
@@ -308,7 +371,20 @@ class _RecognitionScreenState extends State<RecognitionScreen> {
       appBar: AppBar(title: const Text('Face Recognition')),
       body: Stack(
         children: [
-          Positioned.fill(child: CameraPreview(_cameraController!)),
+          Positioned.fill(
+            child: OverflowBox(
+              maxWidth: double.infinity,
+              maxHeight: double.infinity,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _cameraController!.value.previewSize!.height,
+                  height: _cameraController!.value.previewSize!.width,
+                  child: CameraPreview(_cameraController!),
+                ),
+              ),
+            ),
+          ),
 
           Positioned.fill(
             child: CustomPaint(

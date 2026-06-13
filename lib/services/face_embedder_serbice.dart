@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:face_recognition_app/runtime/smart_onnx_model_manager.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:image/image.dart' as img;
 
@@ -8,17 +9,18 @@ class FaceEmbedderService {
   late OrtSession _session;
 
   Future<void> initialize() async {
-    final ort = OnnxRuntime();
 
-    _session = await ort.createSessionFromAsset(
-      'assets/models/mobilefacenet.onnx',
+    _session = await SmartOnnxModelManager.getModel(
+      key: 'facenet',
+      modelPath: 'assets/models/mobilefacenet_fp16_io32.onnx',
     );
 
-    print('MOBILEFACENET LOADED');
+    // print('MOBILEFACENET LOADED');
 
-    for (final input in _session.inputNames) {
-      print('INPUT: $input');
-    }
+    // for (final input in _session.inputNames) {
+      // print('FACENET INPUT: $input');
+    // }
+    // print('Facenet output type: ${_session.inputNames[0].runtimeType}');
   }
 
   Future<List<double>> infer(
@@ -42,7 +44,7 @@ class FaceEmbedderService {
     print("BEFORE RUN");
 
     final outputs = await _session.run({
-      'input.1': inputOrt,
+      _session.inputNames.first.toString(): inputOrt,
     });
 
     print("AFTER RUN");
@@ -147,5 +149,9 @@ class FaceEmbedderService {
     }
 
     return dot;
+  }
+
+  Future<void> dispose() async {
+    await SmartOnnxModelManager.unload('facenet');
   }
 }

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:face_recognition_app/models/detection_candidate.dart';
+import 'package:face_recognition_app/services/anti_spoof_service.dart';
 import 'package:face_recognition_app/services/face_aligner_service.dart';
 import 'package:face_recognition_app/services/face_database_service.dart';
 import 'package:face_recognition_app/services/face_embedder_serbice.dart';
@@ -17,6 +18,7 @@ class RegistrationController extends GetxController {
   final cameraController = Rxn<CameraController>();
   var isProcessing = false.obs;
   var isInitialized = false.obs;
+  final isSwitchCamera = false.obs;
   var cameraIndex = 0.obs;
 
   var detections = <DetectionCandidate>[].obs;
@@ -33,6 +35,7 @@ class RegistrationController extends GetxController {
   final yunet = YuNetService();
   final embedder = FaceEmbedderService();
   final faceAligner = FaceAlignerService();
+  final spoofer = AntiSpoofService();
 
   @override
   Future<void> onInit() async {
@@ -40,6 +43,7 @@ class RegistrationController extends GetxController {
   
     await yunet.initialize();
     await embedder.initialize();
+    await spoofer.initialize();
     await initializeCamera();
   }
 
@@ -56,37 +60,59 @@ class RegistrationController extends GetxController {
   }
 
   Future<void> startCamera(int index) async {
-    isProcessing.value = false;
+    // print('Start camera');
 
-    final oldController = cameraController;
+    isProcessing.value = true;
+    isInitialized.value = false;
 
-    cameraController.value = null;
+    final oldController = cameraController.value;
 
-    if (oldController.value != null) {
+    //cameraController.value = null;
+
+    if (oldController != null) {
+      // print('Dispose old camera');
       try {
-        await oldController.value!.stopImageStream();
-      } catch (e) {
-        // Image stream not active
-      }
+        if (oldController.value.isStreamingImages) {
+          await oldController.stopImageStream();
+        }
+      } catch (_) {}
 
-      await oldController.value!.dispose();
+      await oldController.dispose();
     }
 
-    cameraController.value = CameraController(
+    //await Future.delayed(const Duration(milliseconds: 500));
+
+    final controller = CameraController(
       cameras[index], 
       ResolutionPreset.medium, 
       enableAudio: false
     );
 
-    await cameraController.value!.initialize();
-    await cameraController.value!.lockCaptureOrientation(DeviceOrientation.portraitUp);
-    await cameraController.value!.startImageStream(processCameraImage);
+    await controller.initialize();
+    // print('Camera initialized');
+    await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
+
+    cameraController.value = controller;
+    // print('Controller assigned');
+
+    await controller.startImageStream(processCameraImage);
   
+    // print('Stream started');
     isInitialized.value = true;
+    isProcessing.value = false;
+
+    // print('Start camera completed');
   }
 
   void processCameraImage(CameraImage image) async {
-    if (isProcessing.value) return;
+    if(isSwitchCamera.value) return;
+    if(isProcessing.value) return;
+
+    final controller = cameraController.value;
+
+    if (controller == null) return;
+
+    if (!controller.value.isInitialized) return;
 
     isProcessing.value = true;
 
@@ -118,10 +144,17 @@ class RegistrationController extends GetxController {
     }
   }
 
-  void switchCamera() async {
-    if (cameras.length < 2) return;
-    cameraIndex.value = (cameraIndex.value + 1) % cameras.length;
-    await startCamera(cameraIndex.value);
+  Future<void> switchCamera() async {
+    if(isSwitchCamera.value) return;
+
+    isSwitchCamera.value = true;
+    try {
+      if (cameras.length < 2) return;
+      cameraIndex.value = (cameraIndex.value + 1) % cameras.length;
+      await startCamera(cameraIndex.value);
+    } finally {
+      isSwitchCamera.value = false;
+    }
   }
 
   Future<void> registerFace({required BuildContext context}) async {
@@ -148,18 +181,30 @@ class RegistrationController extends GetxController {
       return;
     }
 
-    print("REGISTER CLICKED");
-    print("Detections = ${detections.length}");
-    print("Frame Null = ${latestFrame == null}");
+    // print("REGISTER CLICKED");
+    // print("Detections = ${detections.length}");
+    // print("Frame Null = ${latestFrame == null}");
 
     final alignedFace = faceAligner.align(latestFrame!, detections.first.landmarks);
+
+    final spoofResult = await spoofer.detect(alignedFace);
+
+    // print('Spoof label: ${spoofResult.label}');
+    print('Spoof score: ${spoofResult.confidence}');
+
+    if(spoofResult.confidence < 0.75 || spoofResult.label != 'Real Face') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Registration Failed: Please keep real face')),
+      );
+      return;
+    }
 
     final bytes = Uint8List.fromList(img.encodeJpg(alignedFace));
 
     alignedFaceBytes.value = bytes;
 
     try {
-      //print("STEP 1");
+      print("STEP 1");
 
       final embedding = await embedder.infer(alignedFace);
 
@@ -167,28 +212,41 @@ class RegistrationController extends GetxController {
 
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${nameController.text} registered")));
 
-      //final faces = await FaceDatabaseService.instance.getAllFaces();
+      final faces = await FaceDatabaseService.instance.getAllFaces();
 
-      /* print(
+      print(
         "REGISTERED FACES = "
         "${faces.length}",
-      ); */
+      );
 
-      /* for (final face in faces) {
+      for (final face in faces) {
         print(face.name);
-      } */
+      }
     } catch (e, st) {
-      //print("EMBEDDER ERROR");
-      //print(e);
+      print("EMBEDDER ERROR: $e");
       print('str: $st');
     }
   }
 
   @override
   void onClose() {
-    cameraController.value?.stopImageStream();
-    cameraController.value?.dispose();
+    final controller = cameraController.value;
+
+    if (controller != null) {
+      try {
+        if (controller.value.isStreamingImages) {
+          controller.stopImageStream();
+        }
+      } catch (_) {}
+
+      controller.dispose();
+    }
+
     nameController.dispose();
+
+    yunet.dispose();
+    spoofer.dispose();
+
     super.onClose();
   }
 }

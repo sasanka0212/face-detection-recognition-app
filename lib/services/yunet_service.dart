@@ -4,6 +4,7 @@ import 'package:face_recognition_app/models/box.dart';
 import 'package:face_recognition_app/models/detection_candidate.dart';
 import 'package:face_recognition_app/models/face_land_marks.dart';
 import 'package:face_recognition_app/models/landmark.dart';
+import 'package:face_recognition_app/runtime/smart_onnx_model_manager.dart';
 import 'package:face_recognition_app/services/yunet_postprocess.dart';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 
@@ -14,28 +15,34 @@ class YuNetService {
   static const double nmsThreshold = 0.3;
 
   Future<void> initialize() async {
-    final ort = OnnxRuntime();
+    _session = await SmartOnnxModelManager.getModel(key: "yunet", modelPath: "assets/models/yunet.onnx");
 
-    _session = await ort.createSessionFromAsset('assets/models/yunet.onnx');
+    // print('YUNET MODEL LOADED');
+    // print('runtime: ${_session.runtimeType}');
 
-    print('YUNET MODEL LOADED');
-    print('runtime: ${_session.runtimeType}');
-    print('input:');
-    _session.inputNames.forEach((input) => print(input));
+    /* _session.inputNames.forEach((input) {
+      print(input);
+    }); */
   }
 
   Future<List<DetectionCandidate>> detect(Float32List inputTensor) async {
+    
     final inputOrt = await OrtValue.fromList(inputTensor, [1, 3, 640, 640]);
 
-    final outputs = await _session.run({'input': inputOrt});
+    final outputs = await _session.run({_session.inputNames.first.toString(): inputOrt});
 
-    print('OUTPUT COUNT: ${outputs.length}');
+    // print('OUTPUT COUNT: ${outputs.length}');
 
-    outputs.forEach((name, value) async {
+    /* outputs.forEach((name, value) async {
       final data = await value.asFlattenedList();
 
       print('$name -> ${data.length}');
-    });
+    }); */
+
+    for (final entry in outputs.entries) {
+      final data = await entry.value.asFlattenedList();
+      print('${entry.key} -> ${data.length}');
+    }
 
     final stride8 = await processStride(outputs: outputs, stride: 8);
 
@@ -247,5 +254,9 @@ class YuNetService {
     }
 
     return keep;
+  }
+
+  Future<void> dispose() async {
+    await SmartOnnxModelManager.unload('yunet');
   }
 }

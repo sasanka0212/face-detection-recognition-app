@@ -1,2 +1,4 @@
 -keep class ai.onnxruntime.** { *; }
+-keep class io.flutter.plugins.camera.** { *; }
+-keep class androidx.camera.** { *; }
 -dontwarn ai.onnxruntime.**
